@@ -53,10 +53,9 @@ import {
   TrendingDown,
   Users,
   BarChart,
-  Layers,
 } from "lucide-react";
 import { ActionsPanel } from "./actions-panel";
-import type { RegressionEntry, UserLeaderboardEntry, SourceBreakdownEntry } from "@/lib/queries/sql-insights";
+import type { RegressionEntry, UserLeaderboardEntry } from "@/lib/queries/sql-insights";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -676,8 +675,6 @@ export function Dashboard({
   interface PanelState<T> { open: boolean; loading: boolean; data: T | null; error: string | null }
   const [regressionPanel, setRegressionPanel] = useState<PanelState<RegressionEntry[]>>({ open: false, loading: false, data: null, error: null });
   const [userPanel, setUserPanel] = useState<PanelState<UserLeaderboardEntry[]>>({ open: false, loading: false, data: null, error: null });
-  const [sourcePanel, setSourcePanel] = useState<PanelState<SourceBreakdownEntry[]>>({ open: false, loading: false, data: null, error: null });
-
   const toggleRegressionPanel = useCallback(async () => {
     setRegressionPanel((prev) => {
       if (prev.open) return { ...prev, open: false };
@@ -707,21 +704,6 @@ export function Dashboard({
       setUserPanel((p) => ({ ...p, loading: false, data: Array.isArray(data) ? data : [], error: null }));
     } catch (err) { setUserPanel((p) => ({ ...p, loading: false, error: err instanceof Error ? err.message : String(err) })); }
   }, [userPanel.data, userPanel.open, serverStartTime, serverEndTime]);
-
-  const toggleSourcePanel = useCallback(async () => {
-    setSourcePanel((prev) => {
-      if (prev.open) return { ...prev, open: false };
-      if (prev.data) return { ...prev, open: true };
-      return { open: true, loading: true, data: null, error: null };
-    });
-    if (sourcePanel.data || sourcePanel.open) return;
-    try {
-      const res = await fetch("/api/sql-source-breakdown", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ startTime: serverStartTime, endTime: serverEndTime }) });
-      if (!res.ok) throw new Error(`${res.status}`);
-      const data = await res.json();
-      setSourcePanel((p) => ({ ...p, loading: false, data: Array.isArray(data) ? data : [], error: null }));
-    } catch (err) { setSourcePanel((p) => ({ ...p, loading: false, error: err instanceof Error ? err.message : String(err) })); }
-  }, [sourcePanel.data, sourcePanel.open, serverStartTime, serverEndTime]);
 
   // Table: search, sort, pagination, min duration filter
   const [tableSearch, setTableSearch] = useState("");
@@ -1605,83 +1587,6 @@ export function Dashboard({
                         ))}
                       </TableBody>
                     </Table>
-                  </div>
-                )}
-              </CardContent>
-            )}
-          </Card>
-        )}
-
-        {/* ── Query Source Breakdown ── */}
-        {!fetchError && serverStartTime && serverEndTime && (
-          <Card className="overflow-hidden">
-            <button onClick={toggleSourcePanel} className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/30 transition-colors">
-              <div className="flex items-center gap-2">
-                <Layers className="h-4 w-4 text-purple-500" />
-                <span className="text-sm font-semibold">Query Source Breakdown</span>
-                <span className="text-xs text-muted-foreground">Duration &amp; cost by origin (dashboard, job, notebook, ad-hoc)</span>
-              </div>
-              <div className="flex items-center gap-2">
-                {sourcePanel.data && <Badge variant="outline" className="text-xs">{sourcePanel.data.length} sources</Badge>}
-                {sourcePanel.open ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
-              </div>
-            </button>
-            {sourcePanel.open && (
-              <CardContent className="pt-0 pb-4 px-4">
-                {sourcePanel.loading && <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Analyzing query sources...</div>}
-                {sourcePanel.error && <p className="text-sm text-destructive py-2">{sourcePanel.error}</p>}
-                {sourcePanel.data && sourcePanel.data.length > 0 && (
-                  <div className="space-y-3">
-                    {/* Visual bar chart */}
-                    <div className="space-y-1.5">
-                      {sourcePanel.data.map((s) => {
-                        const maxDuration = Math.max(...sourcePanel.data!.map((x) => x.totalDurationMin));
-                        const pct = maxDuration > 0 ? (s.totalDurationMin / maxDuration) * 100 : 0;
-                        return (
-                          <div key={s.sourceType} className="flex items-center gap-3">
-                            <span className="text-xs w-24 shrink-0 text-right text-muted-foreground">{s.sourceType}</span>
-                            <div className="flex-1 h-5 bg-muted/30 rounded overflow-hidden relative">
-                              <div className="h-full bg-primary/60 rounded transition-all" style={{ width: `${pct}%` }} />
-                              <span className="absolute inset-0 flex items-center px-2 text-[10px] font-medium">{s.totalDurationMin}m · {s.pctOfTotal}%</span>
-                            </div>
-                            <span className="text-xs tabular-nums text-muted-foreground w-16 text-right">{formatCount(s.queryCount)} queries</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    {/* Detail table */}
-                    <div className="overflow-x-auto rounded-md border border-border/40">
-                      <Table>
-                        <TableHeader>
-                          <TableRow className="bg-muted/30 hover:bg-muted/30">
-                            <TableHead className="text-xs font-semibold px-3 py-2">Source</TableHead>
-                            <TableHead className="text-xs font-semibold px-3 py-2 text-right">Queries</TableHead>
-                            <TableHead className="text-xs font-semibold px-3 py-2 text-right">% of Total</TableHead>
-                            <TableHead className="text-xs font-semibold px-3 py-2 text-right">Total Duration</TableHead>
-                            <TableHead className="text-xs font-semibold px-3 py-2 text-right">Avg Duration</TableHead>
-                            <TableHead className="text-xs font-semibold px-3 py-2 text-right">Failed</TableHead>
-                            <TableHead className="text-xs font-semibold px-3 py-2 text-right">Read</TableHead>
-                            <TableHead className="text-xs font-semibold px-3 py-2 text-right">Users</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {sourcePanel.data.map((s) => (
-                            <TableRow key={s.sourceType} className="hover:bg-muted/20">
-                              <TableCell className="text-xs px-3 py-1.5 font-medium">{s.sourceType}</TableCell>
-                              <TableCell className="text-xs px-3 py-1.5 text-right tabular-nums">{formatCount(s.queryCount)}</TableCell>
-                              <TableCell className="text-xs px-3 py-1.5 text-right tabular-nums">{s.pctOfTotal}%</TableCell>
-                              <TableCell className="text-xs px-3 py-1.5 text-right tabular-nums font-semibold">{s.totalDurationMin}m</TableCell>
-                              <TableCell className="text-xs px-3 py-1.5 text-right tabular-nums">{formatDuration(s.avgDurationMs)}</TableCell>
-                              <TableCell className="text-xs px-3 py-1.5 text-right tabular-nums">
-                                {s.failedCount > 0 ? <span className="text-red-600 dark:text-red-400">{formatCount(s.failedCount)}</span> : "0"}
-                              </TableCell>
-                              <TableCell className="text-xs px-3 py-1.5 text-right tabular-nums">{s.totalReadGiB} GiB</TableCell>
-                              <TableCell className="text-xs px-3 py-1.5 text-right tabular-nums">{s.uniqueUsers}</TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </div>
                   </div>
                 )}
               </CardContent>

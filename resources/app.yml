@@ -1,0 +1,6 @@
+resources:
+  apps:
+    sql_observability_copilot:
+      name: "sql-obs-copilot-${bundle.target}"
+      description: "SQL Observability Co-Pilot — query performance advisor powered by system tables"
+      source_code_path: ..

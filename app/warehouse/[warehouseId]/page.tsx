@@ -44,7 +44,7 @@ async function WarehouseMonitorLoader({
   let initialQueries: TimelineQuery[] = [];
   let liveStats: WarehouseLiveStats | null = null;
   let fetchError: string | null = null;
-  const partialErrors: string[] = [];
+  let partialErrors: string[] = [];
   let initialNextPageToken: string | undefined;
   let initialHasNextPage = false;
 

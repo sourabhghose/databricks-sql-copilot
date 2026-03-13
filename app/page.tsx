@@ -172,24 +172,46 @@ async function CoreDashboardLoader({
 
   const workspaceUrl = getWorkspaceBaseUrl();
 
-  // Fetch warehouse activity sparkline data (non-blocking)
+  // Billing data is delayed 6-24 h. Widen cost lookback to at least 24 h so
+  // cost KPIs always show data even for short query-history windows.
+  const MIN_COST_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+  const dashboardWindowMs = new Date(end).getTime() - new Date(start).getTime();
+  const costStart =
+    dashboardWindowMs < MIN_COST_LOOKBACK_MS
+      ? new Date(new Date(end).getTime() - MIN_COST_LOOKBACK_MS).toISOString()
+      : start;
+
+  // Fetch warehouse activity, costs, and query actions in parallel
   let warehouseActivity: WarehouseActivity[] = [];
-  try {
-    warehouseActivity = await getWarehouseActivityBuckets({
-      startTime: start,
-      endTime: end,
-    });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+  let warehouseCosts: WarehouseCost[] = [];
+  let queryActionsObj: Record<string, { action: "dismiss" | "watch" | "applied"; note: string | null; actedBy: string | null; actedAt: string }> = {};
+
+  const [activityResult, costResult, actionsResult] = await Promise.allSettled([
+    getWarehouseActivityBuckets({ startTime: start, endTime: end }),
+    getWarehouseCosts({ startTime: costStart, endTime: end }),
+    getQueryActions(),
+  ]);
+
+  if (activityResult.status === "fulfilled") {
+    warehouseActivity = activityResult.value;
+  } else {
+    const msg = activityResult.reason instanceof Error ? activityResult.reason.message : String(activityResult.reason);
     console.error("[page] warehouse activity fetch failed:", msg);
     coreFailed.push({ name: "warehouse_activity", status: "error", error: msg, rowCount: 0 });
   }
 
-  // Fetch query actions from Lakebase (non-blocking — empty map on failure)
-  const queryActionsObj: Record<string, { action: "dismiss" | "watch" | "applied"; note: string | null; actedBy: string | null; actedAt: string }> = {};
-  try {
-    const actionsMap = await getQueryActions();
-    for (const [fp, act] of actionsMap) {
+  if (costResult.status === "fulfilled") {
+    warehouseCosts = costResult.value;
+    coreHealth.push({ name: "billing_costs", status: "ok", rowCount: warehouseCosts.length });
+    console.log(`[phase1] costs=${warehouseCosts.length} (window: ${costStart} → ${end})`);
+  } else {
+    const msg = costResult.reason instanceof Error ? costResult.reason.message : String(costResult.reason);
+    console.error("[page] billing cost fetch failed:", msg);
+    coreFailed.push({ name: "billing_costs", status: "error", error: msg, rowCount: 0 });
+  }
+
+  if (actionsResult.status === "fulfilled") {
+    for (const [fp, act] of actionsResult.value) {
       queryActionsObj[fp] = {
         action: act.action,
         note: act.note,
@@ -197,11 +219,29 @@ async function CoreDashboardLoader({
         actedAt: act.actedAt,
       };
     }
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+  } else {
+    const msg = actionsResult.reason instanceof Error ? actionsResult.reason.message : String(actionsResult.reason);
     console.error("[page] query actions fetch failed:", msg);
     coreFailed.push({ name: "query_actions", status: "error", error: msg, rowCount: 0 });
   }
+
+  // Rebuild candidates with cost allocation now that we have costs upfront
+  const sqlTexts = queryRuns.map(r => r.queryText).filter(t => t.length > 0);
+  type TableContextMap = Awaited<ReturnType<typeof fetchTriageTableContext>>;
+  const emptyTableCtx: TableContextMap = new Map();
+  let tableContextMap: TableContextMap = emptyTableCtx;
+  try {
+    tableContextMap = await Promise.race([
+      fetchTriageTableContext(sqlTexts),
+      new Promise<TableContextMap>((_, reject) =>
+        setTimeout(() => reject(new Error("table metadata timeout")), 30_000)
+      ),
+    ]);
+  } catch (err) {
+    console.warn("[phase1] table metadata fetch failed:", err);
+  }
+  const flagTableContext = tableContextMap.size > 0 ? { tables: tableContextMap } : undefined;
+  candidates = buildCandidates(queryRuns, warehouseCosts, flagTableContext);
 
   // Merge failed and ok sources (dedup by name, ok overrides error)
   const coreHealthMap = new Map<string, DataSourceHealth>();
@@ -216,27 +256,16 @@ async function CoreDashboardLoader({
       initialTotalQueries={totalQueryCount}
       initialTimePreset={preset}
       initialCustomRange={customRange}
-      warehouseCosts={[]}
+      warehouseCosts={warehouseCosts}
       warehouseActivity={warehouseActivity}
       workspaceUrl={workspaceUrl}
       fetchError={fetchError}
       dataSourceHealth={allCoreHealth}
       initialQueryActions={queryActionsObj}
+      startTime={start}
+      endTime={end}
     >
-      {/* Phase 2 enrichment streams in via nested Suspense */}
-      <Suspense fallback={
-        <div className="fixed bottom-4 right-4 z-50 flex items-center gap-2 rounded-lg border bg-background/95 px-3 py-2 text-xs text-muted-foreground shadow-lg backdrop-blur supports-[backdrop-filter]:bg-background/60">
-          <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-          Loading cost data…
-        </div>
-      }>
-        <EnrichmentLoader
-          start={start}
-          end={end}
-          queryRuns={queryRuns}
-        />
-      </Suspense>
-      {/* Phase 3: AI triage insights (fast model, streams in last) */}
+      {/* Phase 2: AI triage insights (fast model, streams in via Suspense) */}
       <Suspense fallback={
         <div className="fixed bottom-14 right-4 z-50 flex items-center gap-2 rounded-lg border bg-background/95 px-3 py-2 text-xs text-muted-foreground shadow-lg backdrop-blur supports-[backdrop-filter]:bg-background/60">
           <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
@@ -279,81 +308,7 @@ function withTimeout<T>(
 }
 
 /**
- * Phase 2: Enrichment — costs only (events/utilization removed for speed).
- * Runs in parallel, streamed to client after core dashboard.
- * Re-uses the queryRuns from Phase 1 (passed as prop) to avoid re-fetching.
- * Each query has a 60s timeout to prevent indefinite hanging.
- */
-async function EnrichmentLoader({
-  start,
-  end,
-  queryRuns,
-}: {
-  start: string;
-  end: string;
-  queryRuns: QueryRun[];
-}) {
-  const enrichHealth: DataSourceHealth[] = [];
-  const enrichFailed: DataSourceHealth[] = [];
-  const TIMEOUT_MS = 600_000; // 10 minutes per enrichment query
-
-  // Enrichment: costs + table metadata in parallel
-  const sqlTexts = queryRuns.map(r => r.queryText).filter(t => t.length > 0);
-
-  const [costResult, tableContextMap] = await Promise.all([
-    withTimeout(
-      getWarehouseCosts({ startTime: start, endTime: end }).catch(
-        catchAndLogTracked("billing_costs", [] as WarehouseCost[], enrichFailed)
-      ),
-      TIMEOUT_MS,
-      "billing_costs",
-      [] as WarehouseCost[],
-      enrichFailed
-    ),
-    fetchTriageTableContext(sqlTexts).catch((err) => {
-      console.warn("[phase2] table metadata fetch failed:", err);
-      return new Map() as Awaited<ReturnType<typeof fetchTriageTableContext>>;
-    }),
-  ]);
-
-  enrichHealth.push(
-    { name: "billing_costs", status: "ok", rowCount: costResult.length }
-  );
-
-  // Merge failed and ok sources (ok overrides error)
-  const enrichHealthMap = new Map<string, DataSourceHealth>();
-  for (const h of enrichFailed) enrichHealthMap.set(h.name, h);
-  for (const h of enrichHealth) enrichHealthMap.set(h.name, h);
-  enrichHealthMap.delete("warehouse_events");
-  const finalEnrichHealth = [...enrichHealthMap.values()];
-
-  // Re-build candidates with cost allocation and table context for performance flags
-  const flagTableContext = tableContextMap.size > 0 ? { tables: tableContextMap } : undefined;
-  const candidates = buildCandidates(queryRuns, costResult, flagTableContext);
-
-  console.log(`[phase2] costs=${costResult.length}`);
-
-  // Inject enrichment data as a hidden JSON script for the client to pick up
-  const enrichmentPayload = {
-    candidates,
-    warehouseCosts: costResult,
-    dataSourceHealth: finalEnrichHealth,
-  };
-
-  return (
-    <script
-      id="enrichment-data"
-      type="application/json"
-      suppressHydrationWarning
-      dangerouslySetInnerHTML={{
-        __html: JSON.stringify(enrichmentPayload),
-      }}
-    />
-  );
-}
-
-/**
- * Phase 3: AI Triage — fast model insights for top candidates.
+ * Phase 2: AI Triage — fast model insights for top candidates.
  * Streams in after the main dashboard is interactive.
  */
 async function AiTriageLoader({

@@ -45,7 +45,10 @@ import {
   Flame,
   Hourglass,
   Terminal,
+  Trophy,
+  OctagonAlert,
 } from "lucide-react";
+import { ActionsPanel } from "./actions-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -518,6 +521,9 @@ interface DashboardProps {
   dataSourceHealth?: DataSourceHealth[];
   /** Pre-loaded query actions from Lakebase */
   initialQueryActions?: Record<string, QueryActionEntry>;
+  /** Start/end ISO strings for the active time window (used by ActionsPanel) */
+  startTime?: string;
+  endTime?: string;
   children?: React.ReactNode;
 }
 
@@ -533,46 +539,11 @@ export function Dashboard({
   fetchError,
   dataSourceHealth: initialHealth = [],
   initialQueryActions = {},
+  startTime: serverStartTime,
+  endTime: serverEndTime,
   children,
 }: DashboardProps) {
-  // ── Enrichment data (streamed in from Phase 2) ──
-  const [enrichedCandidates, setEnrichedCandidates] = useState<Candidate[] | null>(null);
-  const [enrichedCosts, setEnrichedCosts] = useState<WarehouseCost[] | null>(null);
-  const [enrichmentLoaded, setEnrichmentLoaded] = useState(false);
-  const [enrichmentHealth, setEnrichmentHealth] = useState<DataSourceHealth[]>([]);
-
-  // Watch for streamed server data via MutationObserver (replaces polling)
-  useEffect(() => {
-    function consumeEnrichment(el: Element) {
-      try {
-        const data = JSON.parse(el.textContent ?? "{}");
-        if (data.candidates) setEnrichedCandidates(data.candidates);
-        if (data.warehouseCosts) setEnrichedCosts(data.warehouseCosts);
-        if (data.dataSourceHealth) setEnrichmentHealth(data.dataSourceHealth);
-        setEnrichmentLoaded(true);
-      } catch { /* ignore parse errors */ }
-    }
-
-    // Already present (SSR or fast stream)
-    const existing = document.getElementById("enrichment-data");
-    if (existing) { consumeEnrichment(existing); return; }
-
-    const observer = new MutationObserver((mutations) => {
-      for (const m of mutations) {
-        for (const node of m.addedNodes) {
-          if (node instanceof HTMLElement && node.id === "enrichment-data") {
-            consumeEnrichment(node);
-            observer.disconnect();
-            return;
-          }
-        }
-      }
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
-    return () => observer.disconnect();
-  }, []);
-
-  // ── AI Triage insights (streamed in from Phase 3) ──
+  // ── AI Triage insights (streamed in from Phase 2) ──
   const [triageInsights, setTriageInsights] = useState<Record<string, { insight: string; action: string }>>({});
   const [triageLoaded, setTriageLoaded] = useState(false);
 
@@ -607,14 +578,11 @@ export function Dashboard({
   const allHealth: DataSourceHealth[] = useMemo(() => {
     const map = new Map<string, DataSourceHealth>();
     for (const h of initialHealth) map.set(h.name, h);
-    for (const h of enrichmentHealth) map.set(h.name, h);
-    // Remove warehouse_events — no longer tracked
     map.delete("warehouse_events");
     return [...map.values()];
-  }, [initialHealth, enrichmentHealth]);
+  }, [initialHealth]);
 
-  // Use enriched data when available, fall back to initial props
-  const warehouseCosts = enrichedCosts ?? initialCosts;
+  const warehouseCosts = initialCosts;
   const router = useRouter();
   const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
@@ -706,8 +674,7 @@ export function Dashboard({
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
 
-  // Use enriched candidates when available (includes cost allocation)
-  const candidates = enrichedCandidates ?? initialCandidates;
+  const candidates = initialCandidates;
   const totalQueries = initialTotalQueries;
 
   // Total dollar cost (pre-computed in SQL from billing.usage JOIN list_prices)
@@ -898,6 +865,74 @@ export function Dashboard({
     return best;
   }, [filtered]);
 
+  // Most efficient & most inefficient query by real users (exclude SPs starting with "svc")
+  type EfficiencyEntry = {
+    user: string;
+    pruning: number;
+    ioCachePct: number;
+    spillRatio: number;
+    spillBytes: number;
+    p95: number;
+    runs: number;
+    querySnippet: string;
+    fingerprint: string;
+    warehouseId: string;
+    score: number;
+  };
+
+  const { topEfficient, worstInefficient } = useMemo<{
+    topEfficient: EfficiencyEntry | null;
+    worstInefficient: EfficiencyEntry | null;
+  }>(() => {
+    if (filtered.length === 0) return { topEfficient: null, worstInefficient: null };
+
+    let best: EfficiencyEntry | null = null;
+    let worst: EfficiencyEntry | null = null;
+
+    for (const c of filtered) {
+      const ws = c.windowStats;
+      if (ws.count < 2) continue;
+
+      const users = c.topUsers.filter(
+        (u) => !u.toLowerCase().startsWith("svc")
+      );
+      if (users.length === 0) continue;
+
+      const spillRatio =
+        ws.totalReadBytes > 0
+          ? ws.totalSpilledBytes / ws.totalReadBytes
+          : 0;
+
+      const pruningScore = ws.avgPruningEfficiency * 35;
+      const spillScore = (1 - Math.min(spillRatio, 1)) * 25;
+      const cacheScore = (ws.avgIoCachePercent / 100) * 20;
+      const speedScore = ws.p95Ms > 0 ? Math.min(20, (5000 / ws.p95Ms) * 20) : 0;
+      const score = pruningScore + spillScore + cacheScore + speedScore;
+
+      const entry: EfficiencyEntry = {
+        user: users[0],
+        pruning: ws.avgPruningEfficiency,
+        ioCachePct: ws.avgIoCachePercent,
+        spillRatio,
+        spillBytes: ws.totalSpilledBytes,
+        p95: ws.p95Ms,
+        runs: ws.count,
+        querySnippet: c.sampleQueryText.slice(0, 120),
+        fingerprint: c.fingerprint,
+        warehouseId: c.warehouseId,
+        score,
+      };
+
+      if (!best || score > best.score) best = entry;
+      if (!worst || score < worst.score) worst = entry;
+    }
+
+    // Don't show worst if it's the same query as best
+    if (best && worst && best.fingerprint === worst.fingerprint) worst = null;
+
+    return { topEfficient: best, worstInefficient: worst };
+  }, [filtered]);
+
   // Selected warehouse config (when a specific warehouse is picked)
   const selectedWarehouse = useMemo(() => {
     if (warehouseFilter === "all") return null;
@@ -932,6 +967,23 @@ export function Dashboard({
   function handleRowClick(candidate: Candidate) {
     setSelectedCandidate(candidate);
     setSheetOpen(true);
+  }
+
+  function buildQueryDetailHref(
+    fingerprint: string,
+    warehouseId?: string,
+    autoAnalyse = false
+  ): string {
+    const params = new URLSearchParams();
+    if (customRange) {
+      params.set("from", customRange.from);
+      params.set("to", customRange.to);
+    } else {
+      params.set("time", timePreset);
+    }
+    if (warehouseId) params.set("warehouse", warehouseId);
+    if (autoAnalyse) params.set("action", "analyse");
+    return `/queries/${fingerprint}?${params.toString()}`;
   }
 
   const openInNewTab = useCallback(
@@ -1228,6 +1280,160 @@ export function Dashboard({
               </p>
             </Card>
           </div>
+        )}
+
+        {/* ── Most Efficient Query ── */}
+        {!fetchError && topEfficient && (
+          <Card className="border-l-4 border-l-yellow-500 py-3 px-4">
+            <div className="flex items-center gap-3">
+              <div className="rounded-lg bg-yellow-100 dark:bg-yellow-900/30 p-2 shrink-0">
+                <Trophy className="h-5 w-5 text-yellow-500" />
+              </div>
+              <div className="flex-1 min-w-0 space-y-1">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Most Efficient Query</span>
+                <div className="flex items-center gap-2">
+                  <Trophy className="h-4 w-4 text-yellow-500 shrink-0" />
+                  <span className="text-sm font-bold text-foreground truncate">
+                    {topEfficient.user.split("@")[0]}
+                  </span>
+                  <span className="text-xs text-muted-foreground truncate hidden sm:inline">
+                    {topEfficient.user.includes("@") ? topEfficient.user : ""}
+                  </span>
+                </div>
+                <Link href={buildQueryDetailHref(topEfficient.fingerprint, topEfficient.warehouseId)}>
+                  <p className="font-mono text-[11px] text-muted-foreground truncate hover:text-primary transition-colors cursor-pointer">
+                    {topEfficient.querySnippet}{topEfficient.querySnippet.length >= 120 ? "\u2026" : ""}
+                  </p>
+                </Link>
+              </div>
+              <div className="hidden md:flex items-center gap-4 text-xs shrink-0">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="text-center cursor-help">
+                      <p className="text-[10px] text-muted-foreground">Pruning</p>
+                      <p className="font-bold tabular-nums text-emerald-600 dark:text-emerald-400">{Math.round(topEfficient.pruning * 100)}%</p>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent>File pruning efficiency — higher means fewer files scanned</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="text-center cursor-help">
+                      <p className="text-[10px] text-muted-foreground">IO Cache</p>
+                      <p className="font-bold tabular-nums text-blue-600 dark:text-blue-400">{Math.round(topEfficient.ioCachePct)}%</p>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent>IO cache hit rate — higher means less cloud storage I/O</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="text-center cursor-help">
+                      <p className="text-[10px] text-muted-foreground">Spill</p>
+                      <p className={`font-bold tabular-nums ${topEfficient.spillRatio < 0.01 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>
+                        {topEfficient.spillRatio < 0.001 ? "None" : `${(topEfficient.spillRatio * 100).toFixed(1)}%`}
+                      </p>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent>Spill-to-read ratio — lower is better, &quot;None&quot; is ideal</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="text-center cursor-help">
+                      <p className="text-[10px] text-muted-foreground">p95</p>
+                      <p className="font-bold tabular-nums">{formatDuration(topEfficient.p95)}</p>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent>95th percentile query duration</TooltipContent>
+                </Tooltip>
+                <div className="text-center">
+                  <p className="text-[10px] text-muted-foreground">Runs</p>
+                  <p className="font-bold tabular-nums">{formatCount(topEfficient.runs)}</p>
+                </div>
+              </div>
+            </div>
+          </Card>
+        )}
+
+        {/* ── Most Inefficient Query ── */}
+        {!fetchError && worstInefficient && (
+          <Card className="border-l-4 border-l-red-500 py-3 px-4">
+            <div className="flex items-center gap-3">
+              <div className="rounded-lg bg-red-100 dark:bg-red-900/30 p-2 shrink-0">
+                <OctagonAlert className="h-5 w-5 text-red-500" />
+              </div>
+              <div className="flex-1 min-w-0 space-y-1">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Most Inefficient Query</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-bold text-foreground truncate">
+                    {worstInefficient.user.split("@")[0]}
+                  </span>
+                  <span className="text-xs text-muted-foreground truncate hidden sm:inline">
+                    {worstInefficient.user.includes("@") ? worstInefficient.user : ""}
+                  </span>
+                </div>
+                <Link href={buildQueryDetailHref(worstInefficient.fingerprint, worstInefficient.warehouseId)}>
+                  <p className="font-mono text-[11px] text-muted-foreground truncate hover:text-primary transition-colors cursor-pointer">
+                    {worstInefficient.querySnippet}{worstInefficient.querySnippet.length >= 120 ? "\u2026" : ""}
+                  </p>
+                </Link>
+              </div>
+              <div className="hidden md:flex items-center gap-4 text-xs shrink-0">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="text-center cursor-help">
+                      <p className="text-[10px] text-muted-foreground">Pruning</p>
+                      <p className={`font-bold tabular-nums ${worstInefficient.pruning < 0.5 ? "text-red-600 dark:text-red-400" : "text-foreground"}`}>
+                        {Math.round(worstInefficient.pruning * 100)}%
+                      </p>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent>File pruning efficiency — low values mean full table scans</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="text-center cursor-help">
+                      <p className="text-[10px] text-muted-foreground">IO Cache</p>
+                      <p className={`font-bold tabular-nums ${worstInefficient.ioCachePct < 20 ? "text-red-600 dark:text-red-400" : "text-foreground"}`}>
+                        {Math.round(worstInefficient.ioCachePct)}%
+                      </p>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent>IO cache hit rate — low values mean repeated cloud storage reads</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="text-center cursor-help">
+                      <p className="text-[10px] text-muted-foreground">Spill</p>
+                      <p className={`font-bold tabular-nums ${worstInefficient.spillRatio > 0.01 ? "text-red-600 dark:text-red-400" : "text-foreground"}`}>
+                        {worstInefficient.spillRatio < 0.001 ? "None" : worstInefficient.spillBytes > 1e9 ? formatBytes(worstInefficient.spillBytes) : `${(worstInefficient.spillRatio * 100).toFixed(1)}%`}
+                      </p>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent>Spill amount — data that overflowed memory to disk</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="text-center cursor-help">
+                      <p className="text-[10px] text-muted-foreground">p95</p>
+                      <p className={`font-bold tabular-nums ${worstInefficient.p95 > 60000 ? "text-red-600 dark:text-red-400" : "text-foreground"}`}>
+                        {formatDuration(worstInefficient.p95)}
+                      </p>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent>95th percentile query duration</TooltipContent>
+                </Tooltip>
+                <div className="text-center">
+                  <p className="text-[10px] text-muted-foreground">Runs</p>
+                  <p className="font-bold tabular-nums">{formatCount(worstInefficient.runs)}</p>
+                </div>
+              </div>
+            </div>
+          </Card>
+        )}
+
+        {/* ── Operator Actions Summary ── */}
+        {!fetchError && serverStartTime && serverEndTime && (
+          <ActionsPanel startTime={serverStartTime} endTime={serverEndTime} />
         )}
 
         {/* ── Warehouse Health CTA ── */}
@@ -1711,7 +1917,7 @@ export function Dashboard({
                                         size="icon-xs"
                                         onClick={(e) => {
                                           e.stopPropagation();
-                                          router.push(`/queries/${c.fingerprint}?action=analyse&warehouse=${c.warehouseId}`);
+                                          router.push(buildQueryDetailHref(c.fingerprint, c.warehouseId, true));
                                         }}
                                       >
                                         <Sparkles className="h-3.5 w-3.5" />
@@ -1728,11 +1934,11 @@ export function Dashboard({
                               <Search className="mr-2 h-4 w-4" />
                               Quick View
                             </ContextMenuItem>
-                            <ContextMenuItem onClick={() => router.push(`/queries/${c.fingerprint}?warehouse=${c.warehouseId}`)}>
+                            <ContextMenuItem onClick={() => router.push(buildQueryDetailHref(c.fingerprint, c.warehouseId))}>
                               <Maximize2 className="mr-2 h-4 w-4" />
                               Full Details
                             </ContextMenuItem>
-                            <ContextMenuItem onClick={() => router.push(`/queries/${c.fingerprint}?action=analyse&warehouse=${c.warehouseId}`)}>
+                            <ContextMenuItem onClick={() => router.push(buildQueryDetailHref(c.fingerprint, c.warehouseId, true))}>
                               <Sparkles className="mr-2 h-4 w-4" />
                               AI Analyse &amp; Optimise
                             </ContextMenuItem>
@@ -1847,13 +2053,7 @@ export function Dashboard({
           onClearAction={clearAction}
         />
 
-        {/* Enrichment loading indicator */}
-        {!enrichmentLoaded && !fetchError && (
-          <div className="fixed bottom-4 right-4 z-50 flex items-center gap-2 rounded-lg border bg-background/95 px-3 py-2 text-xs text-muted-foreground shadow-lg backdrop-blur supports-[backdrop-filter]:bg-background/60">
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-            Loading cost &amp; utilization data…
-          </div>
-        )}
+        {/* Cost data now loads with the page (no streaming phase) */}
 
         {/* Enrichment data injection point (server-streamed) */}
         {children}

@@ -42,7 +42,6 @@ Thumbs.db
 lib/generated/
 
 #agent Docs
-docs
 AGENTS.md
 .cursor
 dbsql-monitor-main

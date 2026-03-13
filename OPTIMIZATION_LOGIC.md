@@ -338,7 +338,7 @@ AI triage provides a 1-2 sentence insight per query pattern, confirming or refin
 
 | Setting | Value |
 |---------|-------|
-| Model | `databricks-llama-4-maverick` |
+| Model | `databricks-claude-sonnet-4-5` |
 | Max patterns per batch | 15 |
 | Timeout | 60 seconds |
 

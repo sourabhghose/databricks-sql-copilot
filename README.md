@@ -1,4 +1,4 @@
-# SQL Observability Co-Pilot — SQL & Jobs Performance Advisor
+# SQL Observability Genie — SQL & Jobs Performance Advisor
 
 > **Not a Databricks product.** This project was built independently by a Databricks SQL SME. It is **not** officially supported, endorsed, or maintained by Databricks, Inc. Databricks provides **no warranty, liability, or support** for this software. Use it entirely at your own risk.
 >
@@ -9,14 +9,14 @@ A Databricks App that surfaces slow and expensive SQL queries, monitors Databric
 Built with Next.js, shadcn/ui, and the Databricks SQL Node.js driver. Deploys natively to [Databricks Apps](https://docs.databricks.com/en/apps/index.html) with on-behalf-of-user (OBO) authentication — queries run under the logged-in user's identity with their Unity Catalog permissions.
 
 <p align="center">
-  <img src="public/1.png" alt="DBSQL Co-Pilot Dashboard" width="100%" />
+  <img src="public/1.png" alt="DBSQL Genie Dashboard" width="100%" />
 </p>
 
 ---
 
 ## What it does
 
-SQL Observability Co-Pilot reads your Databricks system tables to find the queries and jobs that cost the most, run the slowest, or cause the most pressure on your warehouses. It then uses Databricks-hosted AI models to explain what's wrong and suggest fixes.
+SQL Observability Genie reads your Databricks system tables to find the queries and jobs that cost the most, run the slowest, or cause the most pressure on your warehouses. It then uses Databricks-hosted AI models to explain what's wrong and suggest fixes.
 
 ### SQL Observability
 1. **Discovers** slow and high-impact SQL queries from `system.query.history` across all warehouses
@@ -40,7 +40,7 @@ SQL Observability Co-Pilot reads your Databricks system tables to find the queri
 
 ### The app is read-only
 
-SQL Observability Co-Pilot does **not** create, modify, or delete anything in your lakehouse. It only reads system tables and calls `ai_query()`. No tables are created, no data is written to Unity Catalog, and no warehouse settings are changed.
+SQL Observability Genie does **not** create, modify, or delete anything in your lakehouse. It only reads system tables and calls `ai_query()`. No tables are created, no data is written to Unity Catalog, and no warehouse settings are changed.
 
 ---
 
@@ -211,7 +211,7 @@ Databricks Apps are billed per DBU based on app size and uptime. Pricing varies 
 
 **Example cost** (AWS Premium, US-East): A single Medium app running 24/7 for 30 days = 360 DBUs x $0.75/DBU = **~$270/month**.
 
-**Cost optimisation tip**: SQL Observability Co-Pilot does not need to run 24/7. You can **stop the app** when not in use and **start it** only when you need to analyse queries or review warehouse health. If you run the app for ~2 hours per business day (22 days/month), the cost drops to approximately **$16.50/month** for a Medium app on AWS Premium.
+**Cost optimisation tip**: SQL Observability Genie does not need to run 24/7. You can **stop the app** when not in use and **start it** only when you need to analyse queries or review warehouse health. If you run the app for ~2 hours per business day (22 days/month), the cost drops to approximately **$16.50/month** for a Medium app on AWS Premium.
 
 To stop/start your app:
 - **UI**: Go to **Compute > Apps**, click your app, then **Stop** / **Start**
@@ -267,7 +267,7 @@ You should see your SQL warehouses listed.
 
 ```bash
 git clone <repo-url>
-cd databricks-sql-copilot
+cd databricks-sql-genie
 ```
 
 ### Step 3: Create the Databricks App
@@ -277,7 +277,7 @@ In your Databricks workspace UI:
 1. Navigate to **Compute** in the left sidebar
 2. Click **Apps**
 3. Click **Create App**
-4. Enter a name: `dbsql-copilot` (or your preferred name)
+4. Enter a name: `dbsql-genie` (or your preferred name)
 5. Click **Create**
 
 The app is now created but not yet deployed. Note the app name — you'll need it for the deploy command.
@@ -324,7 +324,7 @@ Permission requirements depend on your `AUTH_MODE`:
 - **OBO mode (default):** Each user who opens the app needs `SELECT` access to the system tables below. The service principal only needs **Can use** on the SQL Warehouse. Granting permissions to a **group** (e.g., `platform-admins`) is the easiest approach.
 - **SP mode (`AUTH_MODE=sp`):** The service principal needs all the permissions itself, since it runs every query.
 
-In both cases, find the service principal name on your app's **Settings** tab (looks like `dbsql-copilot-app-sp`).
+In both cases, find the service principal name on your app's **Settings** tab (looks like `dbsql-genie-app-sp`).
 
 ```sql
 -- Service principal: warehouse access (required in both modes)
@@ -361,11 +361,11 @@ From the cloned repository directory:
 
 ```bash
 # Upload the source code to your workspace
-databricks sync . /Workspace/Users/<your-email>/dbsql-copilot
+databricks sync . /Workspace/Users/<your-email>/dbsql-genie
 
 # Deploy the app (in a separate terminal)
-databricks apps deploy dbsql-copilot \
-  --source-code-path /Workspace/Users/<your-email>/dbsql-copilot
+databricks apps deploy dbsql-genie \
+  --source-code-path /Workspace/Users/<your-email>/dbsql-genie
 ```
 
 Replace `<your-email>` with your Databricks workspace email.
@@ -392,11 +392,11 @@ For ongoing development, use `--watch` mode to auto-sync changes:
 
 ```bash
 # Terminal 1: Watch for file changes and sync
-databricks sync --watch . /Workspace/Users/<your-email>/dbsql-copilot
+databricks sync --watch . /Workspace/Users/<your-email>/dbsql-genie
 
 # Terminal 2: Re-deploy after changes
-databricks apps deploy dbsql-copilot \
-  --source-code-path /Workspace/Users/<your-email>/dbsql-copilot
+databricks apps deploy dbsql-genie \
+  --source-code-path /Workspace/Users/<your-email>/dbsql-genie
 ```
 
 ---
@@ -416,7 +416,7 @@ Instead of uploading files with `databricks sync`, you can deploy directly from 
 2. **Create the app** following Steps 3–6 from the deployment guide above (create app, add SQL Warehouse resource, configure user authorization, grant permissions)
 3. **Configure the Git repository**:
    - On your app's page, click **Edit**
-   - In the **Configure Git repository** step, enter your repository URL (e.g., `https://github.com/your-org/databricks-sql-copilot`)
+   - In the **Configure Git repository** step, enter your repository URL (e.g., `https://github.com/your-org/databricks-sql-genie`)
    - Select your Git provider (GitHub, GitLab, Bitbucket, etc.)
    - Click **Save**
 4. **Add a Git credential** (private repos only):
@@ -464,7 +464,7 @@ databricks auth login https://my-workspace.cloud.databricks.com --profile=my-wor
 ./scripts/deploy.sh \
   --profile my-workspace \        # Databricks CLI profile (required)
   --warehouse abc123def456 \      # SQL warehouse ID (required)
-  --app-name sql-obs-copilot \    # App name (default: sql-obs-copilot)
+  --app-name sql-obs-genie \    # App name (default: sql-obs-genie)
   --auth-mode obo \               # obo or sp (default: obo)
   --genie-space <space-id> \      # Genie Space ID (optional)
   --create                        # Create app if it doesn't exist
@@ -487,7 +487,7 @@ For repeatable, multi-environment deployments managed as code.
 ### Bundle structure
 
 ```
-databricks-sql-copilot/
+databricks-sql-genie/
 ├── databricks.yml          # Bundle config with targets
 ├── resources/
 │   └── app.yml             # App resource definition
@@ -531,13 +531,13 @@ databricks bundle validate -t dev
 databricks bundle deploy -t alinta-prod
 
 # Start the app after first deploy
-databricks bundle run sql_observability_copilot -t alinta-prod
+databricks bundle run sql_observability_genie -t alinta-prod
 
 # Tear down
 databricks bundle destroy -t dev
 ```
 
-> **Note**: The DAB approach names the app `sql-obs-copilot-<target>` (e.g., `sql-obs-copilot-dev`). The deploy script approach uses a flat name you specify with `--app-name`. Both work; choose one per workspace.
+> **Note**: The DAB approach names the app `sql-obs-genie-<target>` (e.g., `sql-obs-genie-dev`). The deploy script approach uses a flat name you specify with `--app-name`. Both work; choose one per workspace.
 
 ---
 
@@ -548,7 +548,7 @@ For developing locally before deploying:
 ### Step 1: Install dependencies
 
 ```bash
-cd databricks-sql-copilot
+cd databricks-sql-genie
 npm install
 ```
 
@@ -617,7 +617,7 @@ env:
 
 Deploy (or re-deploy) the app. On first boot with `ENABLE_LAKEBASE=true`, the startup script will:
 
-1. **Create a Lakebase Autoscale project** (`dbsql-copilot`) using the app's service principal
+1. **Create a Lakebase Autoscale project** (`dbsql-genie`) using the app's service principal
 2. **Generate short-lived OAuth DB credentials** (rotated automatically every ~50 minutes at runtime)
 3. **Push the Prisma schema** (`prisma db push`) to create all tables
 
@@ -894,7 +894,7 @@ THIS SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPL
 Licensed under the [Apache License, Version 2.0](LICENSE).
 
 ```
-Copyright 2025 DBSQL Co-Pilot Contributors
+Copyright 2025 DBSQL Genie Contributors
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.

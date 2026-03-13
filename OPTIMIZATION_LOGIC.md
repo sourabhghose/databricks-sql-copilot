@@ -1,6 +1,6 @@
 # SQL Optimization & Warehouse Sizing Logic
 
-This document describes the complete decision-making logic used by the DBSQL Co-Pilot to advise customers on query optimization, warehouse sizing, and infrastructure recommendations. Every threshold, formula, and rule referenced here maps to code in the `lib/domain/` and `lib/ai/` directories.
+This document describes the complete decision-making logic used by the DBSQL Genie to advise customers on query optimization, warehouse sizing, and infrastructure recommendations. Every threshold, formula, and rule referenced here maps to code in the `lib/domain/` and `lib/ai/` directories.
 
 ---
 

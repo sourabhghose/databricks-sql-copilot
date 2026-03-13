@@ -1,5 +1,5 @@
 bundle:
-  name: sql-observability-copilot
+  name: sql-observability-genie
 
 include:
   - resources/*.yml

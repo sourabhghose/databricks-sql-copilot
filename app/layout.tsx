@@ -19,7 +19,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "SQL Observability Co-Pilot",
+  title: "SQL Observability Genie",
   description: "Databricks SQL observability advisor",
   icons: {
     icon: "/databricks-icon.svg",
@@ -58,7 +58,7 @@ export default function RootLayout({
                   priority
                 />
                 <span className="text-lg font-bold tracking-tight text-foreground">
-                  SQL Observability Co-Pilot
+                  SQL Observability Genie
                 </span>
               </Link>
               <span className="ml-3 rounded-md bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">

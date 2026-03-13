@@ -1,10 +1,10 @@
-# Unified Observability Co-Pilot — Product Requirements Document
+# Unified Observability Genie — Product Requirements Document
 
 ## 1. Overview
 
 ### 1.1 Product Name
 
-Unified Observability Co-Pilot
+Unified Observability Genie
 
 ### 1.2 One-Liner
 
@@ -14,7 +14,7 @@ A single Databricks App that surfaces SQL warehouse performance bottlenecks and 
 
 This product merges two independent internal projects:
 
-- **DBSQL Co-Pilot** (`databricks-sql-copilot`): A Next.js Databricks App that reads `system.query.history` and related system tables to surface slow SQL queries, score them by business impact, and generate AI-powered rewrites.
+- **DBSQL Genie** (`databricks-sql-genie`): A Next.js Databricks App that reads `system.query.history` and related system tables to surface slow SQL queries, score them by business impact, and generate AI-powered rewrites.
 - **Spark Observability Agent** (`spark-observability-agent`): A notebook-based toolkit that extracts Spark History Server metrics from Databricks clusters, produces analytics tables, and exposes LLM tools for natural-language performance tuning.
 
 Neither project alone covers the full observability picture. SQL teams miss Spark job context; Spark analysts lack warehouse-level cost and queue pressure data. This PRD defines the unified product that closes both gaps.
@@ -170,7 +170,7 @@ Running a POC or health check for a customer. Needs to deploy the app, run profi
 
 ## 6. Functional Requirements
 
-### 6.1 SQL Observability (Existing — from DBSQL Co-Pilot)
+### 6.1 SQL Observability (Existing — from DBSQL Genie)
 
 | ID | Requirement | Priority |
 |---|---|---|

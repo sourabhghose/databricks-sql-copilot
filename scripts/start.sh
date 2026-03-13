@@ -1,5 +1,5 @@
 #!/bin/sh
-# Databricks SQL Co-Pilot — Production startup script for Databricks Apps
+# Databricks SQL Genie — Production startup script for Databricks Apps
 #
 # The platform runs `npm install` + `npm run build` before this script.
 # After build, .next/standalone/ contains the self-contained server.

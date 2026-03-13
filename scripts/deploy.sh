@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Deploy SQL Observability Co-Pilot to a Databricks workspace.
+# Deploy SQL Observability Genie to a Databricks workspace.
 #
 # Usage:
 #   ./scripts/deploy.sh --profile <cli-profile> --warehouse <id> [options]
@@ -8,7 +8,7 @@
 # Options:
 #   --profile, -p    Databricks CLI profile name (required)
 #   --warehouse, -w  SQL warehouse ID (required)
-#   --app-name, -n   App name (default: sql-obs-copilot)
+#   --app-name, -n   App name (default: sql-obs-genie)
 #   --auth-mode, -a  Auth mode: obo or sp (default: obo)
 #   --genie-space    Genie Space ID (optional, leave blank to skip)
 #   --create         Create the app if it doesn't exist
@@ -28,7 +28,7 @@ set -euo pipefail
 
 PROFILE=""
 WAREHOUSE_ID=""
-APP_NAME="sql-obs-copilot"
+APP_NAME="sql-obs-genie"
 AUTH_MODE="obo"
 GENIE_SPACE_ID=""
 CREATE_APP=false
@@ -58,7 +58,7 @@ if [[ -z "$PROFILE" || -z "$WAREHOUSE_ID" ]]; then
   usage
 fi
 
-echo "=== SQL Observability Co-Pilot Deployer ==="
+echo "=== SQL Observability Genie Deployer ==="
 echo "  Profile:      $PROFILE"
 echo "  Warehouse:    $WAREHOUSE_ID"
 echo "  App name:     $APP_NAME"
@@ -82,7 +82,7 @@ if $CREATE_APP; then
     echo "  ✓ App already exists, skipping creation"
   else
     databricks apps create "$APP_NAME" \
-      --description "SQL Observability Co-Pilot" \
+      --description "SQL Observability Genie" \
       --profile "$PROFILE" \
       --no-compute
     echo "  ✓ App created"

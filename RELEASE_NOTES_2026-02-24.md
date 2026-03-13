@@ -106,7 +106,7 @@ The app now self-provisions a Lakebase Autoscale project on first boot when depl
 
 ### How it works
 1. `scripts/start.sh` detects `ENABLE_LAKEBASE=true` + service principal + no `DATABASE_URL`.
-2. `scripts/provision-lakebase.mjs` creates the project (`dbsql-copilot`, PG 17, branch `production`).
+2. `scripts/provision-lakebase.mjs` creates the project (`dbsql-genie`, PG 17, branch `production`).
 3. `prisma db push` creates all tables.
 4. At runtime, `lib/lakebase/provision.ts` handles credential rotation (~50-minute refresh cycle).
 

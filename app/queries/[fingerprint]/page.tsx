@@ -4,18 +4,45 @@ import { notFound } from "next/navigation";
 import { listRecentQueries } from "@/lib/queries/query-history";
 import { getWarehouseCosts } from "@/lib/queries/warehouse-cost";
 import { buildCandidates } from "@/lib/domain/candidate-builder";
-import { getWorkspaceBaseUrl } from "@/lib/utils/deep-links";
-import { Card, CardContent } from "@/components/ui/card";
+import { explainScore } from "@/lib/domain/scoring";
+import { getWorkspaceBaseUrl, buildDeepLink } from "@/lib/utils/deep-links";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Loader2 } from "lucide-react";
-import type { WarehouseCost } from "@/lib/domain/types";
+import { StatusBadge } from "@/components/ui/status-badge";
+import type { Candidate, WarehouseCost } from "@/lib/domain/types";
 import { QueryDetailClient } from "./query-detail-client";
 
 export const revalidate = 300; // cache for 5 minutes
 
 interface QueryDetailPageProps {
   params: Promise<{ fingerprint: string }>;
-  searchParams: Promise<{ start?: string; end?: string; action?: string; warehouse?: string }>;
+  searchParams: Promise<{ start?: string; end?: string; from?: string; to?: string; time?: string; action?: string; warehouse?: string }>;
+}
+
+const BILLING_LAG_HOURS = 6;
+const QUANTIZE_MS = 300_000; // 5 minutes
+
+function timeRangeForPreset(preset: string): { start: string; end: string } {
+  const now = new Date();
+  const lagMs = BILLING_LAG_HOURS * 60 * 60 * 1000;
+  const quantizedNow = Math.floor(now.getTime() / QUANTIZE_MS) * QUANTIZE_MS;
+  const endMs = quantizedNow - lagMs;
+  const knownMs: Record<string, number> = {
+    "1h": 1 * 60 * 60 * 1000,
+    "6h": 6 * 60 * 60 * 1000,
+    "24h": 24 * 60 * 60 * 1000,
+    "7d": 7 * 24 * 60 * 60 * 1000,
+  };
+  const maybeHours = preset.match(/^(\d+)h$/);
+  const windowMs = knownMs[preset] ?? (maybeHours ? parseInt(maybeHours[1], 10) * 60 * 60 * 1000 : knownMs["1h"]);
+  const startMs = endMs - windowMs;
+  return {
+    start: new Date(startMs).toISOString(),
+    end: new Date(endMs).toISOString(),
+  };
 }
 
 function DetailSkeleton() {
@@ -88,7 +115,7 @@ async function QueryDetailLoader({
     listRecentQueries({
       startTime: start,
       endTime: end,
-      limit: 500,
+      limit: 2000,
       warehouseId,
     }),
     getWarehouseCosts({ startTime: start, endTime: end }).catch(
@@ -96,8 +123,27 @@ async function QueryDetailLoader({
     ),
   ]);
 
-  const candidates = buildCandidates(queryResult, costResult);
-  const candidate = candidates.find((c) => c.fingerprint === fingerprint);
+  let candidates = buildCandidates(queryResult, costResult);
+  let candidate = candidates.find((c) => c.fingerprint === fingerprint);
+
+  // Fallback: if the fingerprint is not in the selected range, broaden lookup
+  // to reduce 404s when users navigate from cached/older dashboard rows.
+  if (!candidate) {
+    const fallbackStart = new Date(new Date(end).getTime() - 24 * 60 * 60 * 1000).toISOString();
+    const [fallbackQueries, fallbackCosts] = await Promise.all([
+      listRecentQueries({
+        startTime: fallbackStart,
+        endTime: end,
+        limit: 5000,
+        warehouseId,
+      }).catch(catchAndLog("queries_fallback", [])),
+      getWarehouseCosts({ startTime: fallbackStart, endTime: end }).catch(
+        catchAndLog("costs_fallback", [] as WarehouseCost[])
+      ),
+    ]);
+    candidates = buildCandidates(fallbackQueries, fallbackCosts);
+    candidate = candidates.find((c) => c.fingerprint === fingerprint);
+  }
 
   if (!candidate) {
     notFound();
@@ -118,13 +164,26 @@ export default async function QueryDetailPage(props: QueryDetailPageProps) {
   const { fingerprint } = await props.params;
   const searchParams = await props.searchParams;
 
-  // Use same billing-lag-shifted window as dashboard (6h offset)
-  const BILLING_LAG_MS = 6 * 60 * 60 * 1000;
-  const now = new Date();
-  const lagEnd = new Date(now.getTime() - BILLING_LAG_MS);
-  const lagStart = new Date(lagEnd.getTime() - 60 * 60 * 1000); // 1h window
-  const start = searchParams.start ?? lagStart.toISOString();
-  const end = searchParams.end ?? lagEnd.toISOString();
+  let start = searchParams.start;
+  let end = searchParams.end;
+
+  if (!start || !end) {
+    if (searchParams.from && searchParams.to) {
+      const fromMs = Date.parse(searchParams.from);
+      const toMs = Date.parse(searchParams.to);
+      if (!isNaN(fromMs) && !isNaN(toMs) && fromMs < toMs) {
+        start = new Date(fromMs).toISOString();
+        end = new Date(toMs).toISOString();
+      }
+    }
+  }
+  if (!start || !end) {
+    const preset = searchParams.time ?? "1h";
+    const range = timeRangeForPreset(preset);
+    start = range.start;
+    end = range.end;
+  }
+
   const autoAnalyse = searchParams.action === "analyse";
   const warehouseId = searchParams.warehouse;
 

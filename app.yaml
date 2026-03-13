@@ -15,4 +15,20 @@ command:
 
 env:
   - name: DATABRICKS_WAREHOUSE_ID
-    valueFrom: sql-warehouse
+    value: "bfe02b96b14128c0"
+  - name: AUTH_MODE
+    value: "obo"
+  - name: UNIFIED_OBSERVABILITY_CATALOG
+    value: "main"
+  - name: UNIFIED_OBSERVABILITY_SCHEMA
+    value: "unified_observability"
+  - name: SPARK_HOTSPOT_LIMIT
+    value: "25"
+  - name: SQL_FRESHNESS_SLO_MINUTES
+    value: "30"
+  - name: SPARK_FRESHNESS_SLO_MINUTES
+    value: "120"
+  - name: PHOTON_FRESHNESS_SLO_MINUTES
+    value: "1440"
+  - name: GENIE_SPACE_ID
+    value: "01f11dc201071ef782dbdea63e487090"

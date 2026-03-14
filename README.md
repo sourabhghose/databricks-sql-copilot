@@ -458,15 +458,55 @@ databricks auth login https://my-workspace.cloud.databricks.com --profile=my-wor
 ./scripts/deploy.sh --profile my-workspace --warehouse abc123def456
 ```
 
+### Deploy with auto-provisioned Genie Space
+
+On first deploy, use `--create-genie` to automatically create and configure a Genie Space from the included config:
+
+```bash
+./scripts/deploy.sh \
+  --profile my-workspace \
+  --warehouse abc123def456 \
+  --create \
+  --create-genie
+```
+
+This will:
+1. Create the Genie Space via the REST API using `observability/genie/genie-space-config.json`
+2. Create the Databricks App
+3. Deploy the app with the new Genie Space ID
+4. Auto-grant `CAN_RUN` on the Genie Space to the app's service principal
+
+On subsequent deploys, pass the Genie Space ID directly:
+
+```bash
+./scripts/deploy.sh \
+  --profile my-workspace \
+  --warehouse abc123def456 \
+  --genie-space 01f11d330b1e17349370616c86cb90ba
+```
+
+### Provision a Genie Space standalone
+
+You can also create a Genie Space independently of deployment:
+
+```bash
+./scripts/provision-genie-space.sh \
+  --profile my-workspace \
+  --warehouse abc123def456
+```
+
+The script outputs the new Space ID on the last line. It reads the space configuration (tables, instructions, sample questions) from `observability/genie/genie-space-config.json`.
+
 ### Full options
 
 ```bash
 ./scripts/deploy.sh \
   --profile my-workspace \        # Databricks CLI profile (required)
   --warehouse abc123def456 \      # SQL warehouse ID (required)
-  --app-name sql-obs-genie \    # App name (default: sql-obs-genie)
+  --app-name sql-obs-genie \      # App name (default: sql-obs-genie)
   --auth-mode obo \               # obo or sp (default: obo)
   --genie-space <space-id> \      # Genie Space ID (optional)
+  --create-genie                  # Auto-provision Genie Space from config
   --create                        # Create app if it doesn't exist
 ```
 
@@ -476,7 +516,8 @@ After the script completes, it prints the app's service principal ID. You (or a 
 
 1. **Grant the SP `CAN_USE` on the SQL warehouse** (via Databricks UI: SQL Warehouses > Permissions)
 2. **Grant system table `SELECT`** (see [Permissions reference](#permissions-reference))
-3. If using Genie: **Grant the SP `CAN_RUN` on the Genie Space**
+3. If using Genie: **Verify the SP has `CAN_RUN` on the Genie Space** (auto-granted by `--create-genie`, but verify)
+4. If using OBO mode with Genie: **Verify OBO scopes include `dashboards.genie`** in the app settings UI
 
 ---
 
@@ -722,6 +763,7 @@ In SP mode, all queries run as the service principal regardless of who is logged
 | Variable | Where | Description |
 |---|---|---|
 | `AUTH_MODE` | `app.yaml` or `.env.local` | `obo` (default) = use logged-in user's token; `sp` = always use service principal |
+| `GENIE_SPACE_ID` | `app.yaml` or `.env.local` | Genie Space ID for the natural-language query interface (optional) |
 | `ENABLE_LAKEBASE` | `app.yaml` or `.env.local` | Set to `true` to enable persistence (default: `false`) |
 | `DATABRICKS_TOKEN` | `.env.local` only | Personal access token for local development |
 | `UNIFIED_OBSERVABILITY_CATALOG` | `app.yaml` or `.env.local` | Catalog that contains the unified observability views |
@@ -858,6 +900,8 @@ components/
 | "PERMISSION_DENIED" in logs | User or SP lacks a specific permission | Check which API/table failed and grant the corresponding permission |
 | App stuck on "Starting" | Build failed | Check the **Logs** tab for npm or TypeScript errors |
 | Blank page after deploy | Missing warehouse resource | Ensure `sql-warehouse` resource is added (Step 4) |
+| Genie shows "GENIE_SPACE_NOT_FOUND" | Genie Space deleted or SP lacks access | Re-provision with `./scripts/provision-genie-space.sh` and update `GENIE_SPACE_ID` |
+| Genie shows "PERMISSION_DENIED" | SP or user lacks warehouse/Genie permission | Grant SP `CAN_RUN` on the Genie Space and `CAN_USE` on the SQL warehouse |
 
 ### Checking logs
 

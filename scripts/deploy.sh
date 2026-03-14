@@ -11,17 +11,18 @@
 #   --app-name, -n   App name (default: sql-obs-genie)
 #   --auth-mode, -a  Auth mode: obo or sp (default: obo)
 #   --genie-space    Genie Space ID (optional, leave blank to skip)
+#   --create-genie   Auto-provision Genie Space from genie-space-config.json
 #   --create         Create the app if it doesn't exist
 #   --help, -h       Show this help message
 #
 # Examples:
-#   # First deploy to a new workspace
-#   ./scripts/deploy.sh -p my-workspace -w abc123 --create
+#   # First deploy to a new workspace (auto-creates Genie Space)
+#   ./scripts/deploy.sh -p my-workspace -w abc123 --create --create-genie
 #
 #   # Redeploy to existing app
 #   ./scripts/deploy.sh -p my-workspace -w abc123
 #
-#   # Deploy with SP auth and Genie
+#   # Deploy with SP auth and existing Genie Space
 #   ./scripts/deploy.sh -p DEFAULT -w 75fd8278393d07eb -a sp --genie-space 01f11d330b1e17349370616c86cb90ba
 
 set -euo pipefail
@@ -32,6 +33,7 @@ APP_NAME="sql-obs-genie"
 AUTH_MODE="obo"
 GENIE_SPACE_ID=""
 CREATE_APP=false
+CREATE_GENIE=false
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
@@ -47,6 +49,7 @@ while [[ $# -gt 0 ]]; do
     -n|--app-name)   APP_NAME="$2"; shift 2 ;;
     -a|--auth-mode)  AUTH_MODE="$2"; shift 2 ;;
     --genie-space)   GENIE_SPACE_ID="$2"; shift 2 ;;
+    --create-genie)  CREATE_GENIE=true; shift ;;
     --create)        CREATE_APP=true; shift ;;
     -h|--help)       usage ;;
     *) echo "Unknown option: $1"; usage ;;
@@ -73,6 +76,31 @@ if ! databricks auth profiles 2>/dev/null | grep -q "$PROFILE.*YES"; then
   exit 1
 fi
 echo "  ✓ Profile is valid"
+
+# Step 0.5: Provision Genie Space if requested and no space ID provided
+if $CREATE_GENIE && [[ -z "$GENIE_SPACE_ID" ]]; then
+  echo ""
+  echo "→ Auto-provisioning Genie Space from config..."
+  GENIE_OUTPUT=$("$SCRIPT_DIR/provision-genie-space.sh" \
+    --profile "$PROFILE" \
+    --warehouse "$WAREHOUSE_ID" 2>&1) || {
+    echo "  ⚠ Genie Space provisioning failed. Continuing without Genie."
+    echo "  $GENIE_OUTPUT"
+    GENIE_OUTPUT=""
+  }
+  if [[ -n "$GENIE_OUTPUT" ]]; then
+    GENIE_SPACE_ID=$(echo "$GENIE_OUTPUT" | tail -1)
+    if [[ ${#GENIE_SPACE_ID} -ge 20 ]]; then
+      echo "  ✓ Genie Space provisioned: $GENIE_SPACE_ID"
+    else
+      echo "  ⚠ Could not extract Space ID. Continuing without Genie."
+      GENIE_SPACE_ID=""
+    fi
+  fi
+elif $CREATE_GENIE && [[ -n "$GENIE_SPACE_ID" ]]; then
+  echo ""
+  echo "  ℹ  --create-genie ignored because --genie-space was provided"
+fi
 
 # Step 1: Create app if requested
 if $CREATE_APP; then
@@ -156,15 +184,35 @@ mv "$BACKUP" "$PROJECT_DIR/app.yaml"
 echo ""
 echo "=== Deployment Summary ==="
 APP_URL=$(databricks apps get "$APP_NAME" --profile "$PROFILE" --output json 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('url','unknown'))" 2>/dev/null || echo "unknown")
-SP_ID=$(databricks apps get "$APP_NAME" --profile "$PROFILE" --output json 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('service_principal_client_id','unknown'))" 2>/dev/null || echo "unknown")
+DEPLOYED_SP_ID=$(databricks apps get "$APP_NAME" --profile "$PROFILE" --output json 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('service_principal_client_id','unknown'))" 2>/dev/null || echo "unknown")
 
-echo "  App URL:  $APP_URL"
-echo "  SP ID:    $SP_ID"
+echo "  App URL:     $APP_URL"
+echo "  SP ID:       $DEPLOYED_SP_ID"
+echo "  Genie Space: ${GENIE_SPACE_ID:-<none>}"
+echo ""
+
+# Step 6: Auto-grant Genie Space permissions to the app's SP
+if [[ -n "$GENIE_SPACE_ID" && "$DEPLOYED_SP_ID" != "unknown" ]]; then
+  echo "→ Granting Genie Space permissions to app SP..."
+  PERM_RESP=$(databricks api patch "/api/2.0/permissions/genie/$GENIE_SPACE_ID" \
+    --profile "$PROFILE" \
+    --json "{\"access_control_list\":[{\"service_principal_name\":\"$DEPLOYED_SP_ID\",\"permission_level\":\"CAN_RUN\"}]}" 2>&1) || true
+  if echo "$PERM_RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if 'access_control_list' in d else 1)" 2>/dev/null; then
+    echo "  ✓ CAN_RUN granted to SP on Genie Space"
+  else
+    echo "  ⚠ Could not auto-grant CAN_RUN. Please grant manually:"
+    echo "    Genie Space → Share → Add SP '$DEPLOYED_SP_ID' with 'Can Run'"
+  fi
+fi
+
 echo ""
 echo "Post-deploy checklist:"
-echo "  1. Grant SP '$SP_ID' CAN_USE on warehouse '$WAREHOUSE_ID'"
+echo "  1. Grant SP '$DEPLOYED_SP_ID' CAN_USE on warehouse '$WAREHOUSE_ID'"
 if [[ -n "$GENIE_SPACE_ID" ]]; then
-  echo "  2. Grant SP '$SP_ID' CAN_RUN on Genie space '$GENIE_SPACE_ID'"
+  echo "  2. Verify SP '$DEPLOYED_SP_ID' has CAN_RUN on Genie space '$GENIE_SPACE_ID'"
+fi
+if [[ "$AUTH_MODE" == "obo" ]]; then
+  echo "  3. Verify OBO scopes include 'dashboards.genie' in the app settings UI"
 fi
 echo ""
 echo "Done!"

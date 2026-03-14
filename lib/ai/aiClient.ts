@@ -19,10 +19,7 @@ import {
   type DiagnoseResponse,
   type RewriteResponse,
 } from "./promptBuilder";
-import {
-  DiagnoseResponseSchema,
-  RewriteResponseSchema,
-} from "@/lib/validation";
+import { DiagnoseResponseSchema, RewriteResponseSchema } from "@/lib/validation";
 import { aiSemaphore } from "@/lib/ai/semaphore";
 import { writePromptLog } from "@/lib/ai/prompt-logger";
 
@@ -54,10 +51,7 @@ function escapeForSql(text: string): string {
  * Call the Databricks AI model via ai_query() SQL function.
  * Uses semaphore for concurrency control.
  */
-export async function callAi(
-  mode: AiMode,
-  context: PromptContext
-): Promise<AiResult> {
+export async function callAi(mode: AiMode, context: PromptContext): Promise<AiResult> {
   // Build prompt
   const prompt = buildPrompt(mode, context);
 
@@ -85,18 +79,17 @@ export async function callAi(
     ) AS response
   `;
 
-  console.log(
-    `[ai] calling ${model} mode=${mode}, prompt ~${prompt.estimatedTokens} input tokens`
-  );
+  console.log(`[ai] calling ${model} mode=${mode}, prompt ~${prompt.estimatedTokens} input tokens`);
 
   const t0 = Date.now();
 
   try {
-    const aiPromise = aiSemaphore.run(() =>
-      executeQuery<{ response: string }>(sql)
-    );
+    const aiPromise = aiSemaphore.run(() => executeQuery<{ response: string }>(sql));
     const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`AI ${mode} call timed out after ${AI_TIMEOUT_MS / 1000}s`)), AI_TIMEOUT_MS)
+      setTimeout(
+        () => reject(new Error(`AI ${mode} call timed out after ${AI_TIMEOUT_MS / 1000}s`)),
+        AI_TIMEOUT_MS,
+      ),
     );
     const result = await Promise.race([aiPromise, timeoutPromise]);
 
@@ -119,9 +112,7 @@ export async function callAi(
 
     const rawResponse = result.rows[0].response;
 
-    console.log(
-      `[ai] ${mode} response received: ${rawResponse.length.toLocaleString()} chars`
-    );
+    console.log(`[ai] ${mode} response received: ${rawResponse.length.toLocaleString()} chars`);
 
     const parsed = parseAndValidate(rawResponse, mode);
 
@@ -173,7 +164,8 @@ export async function callAi(
     if (msg.includes("PERMISSION_DENIED") || msg.includes("permission")) {
       return {
         status: "error",
-        message: "Insufficient permissions to call ai_query(). The service principal needs access to Foundation Model APIs.",
+        message:
+          "Insufficient permissions to call ai_query(). The service principal needs access to Foundation Model APIs.",
       };
     }
 
@@ -184,10 +176,7 @@ export async function callAi(
 /**
  * Fallback: call ai_query() without returnType for environments that don't support it.
  */
-async function callAiUnstructured(
-  mode: AiMode,
-  context: PromptContext
-): Promise<AiResult> {
+async function callAiUnstructured(mode: AiMode, context: PromptContext): Promise<AiResult> {
   const prompt = buildPrompt(mode, context);
   const model = MODELS[mode];
 
@@ -206,11 +195,12 @@ async function callAiUnstructured(
   const t0 = Date.now();
 
   try {
-    const aiPromise = aiSemaphore.run(() =>
-      executeQuery<{ response: string }>(sql)
-    );
+    const aiPromise = aiSemaphore.run(() => executeQuery<{ response: string }>(sql));
     const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`AI ${mode} call timed out after ${AI_TIMEOUT_MS / 1000}s`)), AI_TIMEOUT_MS)
+      setTimeout(
+        () => reject(new Error(`AI ${mode} call timed out after ${AI_TIMEOUT_MS / 1000}s`)),
+        AI_TIMEOUT_MS,
+      ),
     );
     const result = await Promise.race([aiPromise, timeoutPromise]);
 
@@ -233,9 +223,7 @@ async function callAiUnstructured(
 
     const rawResponse = result.rows[0].response;
     const responseChars = rawResponse.length;
-    console.log(
-      `[ai] ${mode} unstructured response: ${responseChars.toLocaleString()} chars`
-    );
+    console.log(`[ai] ${mode} unstructured response: ${responseChars.toLocaleString()} chars`);
 
     const parsed = parseAiJson(rawResponse, mode);
 
@@ -285,10 +273,7 @@ async function callAiUnstructured(
  * Parse and validate AI response using Zod schemas.
  * Handles both structured (returnType) and unstructured JSON responses.
  */
-function parseAndValidate(
-  raw: string,
-  mode: AiMode
-): DiagnoseResponse | RewriteResponse | null {
+function parseAndValidate(raw: string, mode: AiMode): DiagnoseResponse | RewriteResponse | null {
   // Try parsing as JSON directly (structured returnType response)
   let parsed: unknown;
   try {
@@ -307,7 +292,7 @@ function parseAndValidate(
 
   console.warn(
     "[ai] Zod validation failed, attempting JSON extraction fallback:",
-    result.error.issues.map((i) => i.message).join(", ")
+    result.error.issues.map((i) => i.message).join(", "),
   );
   return parseAiJson(raw, mode);
 }
@@ -316,10 +301,7 @@ function parseAndValidate(
  * Parse AI response from unstructured text, handling markdown fences and truncation.
  * Uses Zod validation for type safety, with lenient fallbacks.
  */
-function parseAiJson(
-  raw: string,
-  mode: AiMode
-): DiagnoseResponse | RewriteResponse | null {
+function parseAiJson(raw: string, mode: AiMode): DiagnoseResponse | RewriteResponse | null {
   let jsonStr = raw.trim();
 
   // Strip outer markdown code fences. The rewrittenSql field may contain
@@ -484,9 +466,18 @@ function repairTruncatedJson(json: string): string {
 
   for (let i = 0; i < repaired.length; i++) {
     const ch = repaired[i];
-    if (escaped) { escaped = false; continue; }
-    if (ch === "\\") { escaped = true; continue; }
-    if (ch === '"') { inString = !inString; continue; }
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
     if (inString) continue;
     if (ch === "{") stack.push("}");
     else if (ch === "[") stack.push("]");
@@ -499,7 +490,7 @@ function repairTruncatedJson(json: string): string {
     const lastCleanBreak = Math.max(
       repaired.lastIndexOf('",'),
       repaired.lastIndexOf('"]'),
-      repaired.lastIndexOf('"}')
+      repaired.lastIndexOf('"}'),
     );
     if (lastCleanBreak > 0) {
       repaired = repaired.slice(0, lastCleanBreak + 1);

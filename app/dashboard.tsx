@@ -709,11 +709,12 @@ export function Dashboard({
   const allHealth: DataSourceHealth[] = useMemo(() => {
     const map = new Map<string, DataSourceHealth>();
     for (const h of initialHealth) map.set(h.name, h);
+    for (const h of enrichmentHealth) map.set(h.name, h);
     map.delete("warehouse_events");
     return [...map.values()];
-  }, [initialHealth]);
+  }, [initialHealth, enrichmentHealth]);
 
-  const warehouseCosts = initialCosts;
+  const warehouseCosts = enrichedCosts ?? initialCosts;
   const router = useRouter();
   const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
@@ -844,7 +845,7 @@ export function Dashboard({
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
 
-  const candidates = initialCandidates;
+  const candidates = enrichedCandidates ?? initialCandidates;
   const totalQueries = initialTotalQueries;
 
   // Total dollar cost (pre-computed in SQL from billing.usage JOIN list_prices)
